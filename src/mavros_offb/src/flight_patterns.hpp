@@ -26,6 +26,7 @@ namespace uosm
             double offset_x = 0.0f;
             double offset_y = 0.0f;
             double offset_z = 0.0f;
+            double offset_theta = 0.0f;
             double frequency = 0.0f;
             int ngram_vertices = 7;
             int ngram_step = 2;
@@ -45,7 +46,6 @@ namespace uosm
             PatternParameters params_; // initial params
             double theta_ = 0.0f;      // progression of the pattern
             int iteration_ = 0;        // number of iterations
-            static constexpr double YAW_OFFSET = 0; // M_PI_2; // 90 degrees
 
         public:
             /**
@@ -72,7 +72,7 @@ namespace uosm
                 pose.pose.position.y = params_.offset_y;
                 pose.pose.position.z = params_.height;
                 tf2::Quaternion quat;
-                quat.setRPY(0, 0, YAW_OFFSET);
+                quat.setRPY(0, 0, 0);
                 pose.pose.orientation = tf2::toMsg(quat);
             }
 
@@ -81,9 +81,9 @@ namespace uosm
              */
             void increase_iteration()
             {
-                if (theta_ >= TWO_PI)
+                if (theta_ >= TWO_PI + params_.offset_theta)
                 {
-                    theta_ = 0.0;
+                    theta_ = params_.offset_theta;
                     ++iteration_;
                 }
             }
@@ -108,6 +108,7 @@ namespace uosm
             CircularPattern(const PatternParameters &params)
             {
                 params_ = params;
+                theta_ = params_.offset_theta;
             }
 
             void run(geometry_msgs::msg::PoseStamped &pose) override
@@ -115,10 +116,10 @@ namespace uosm
                 pose.pose.position.x = params_.radius * cos(theta_) + params_.offset_x;
                 pose.pose.position.y = params_.radius * sin(theta_) + params_.offset_y;
                 pose.pose.position.z = params_.height;
-
+                printf("X: %f, Y: %f, Z: %f\n", pose.pose.position.x, pose.pose.position.y, pose.pose.position.z);
                 double angle_towards_middle = atan2(params_.offset_y - pose.pose.position.y, params_.offset_x - pose.pose.position.x);
                 tf2::Quaternion quat;
-                quat.setRPY(0, 0, angle_towards_middle + YAW_OFFSET);
+                quat.setRPY(0, 0, angle_towards_middle);
                 pose.pose.orientation = tf2::toMsg(quat);
                 theta_ += params_.speed * params_.dt; // angular velocity
                 increase_iteration();
@@ -137,6 +138,7 @@ namespace uosm
                 params_ = params;
                 min_height_ = params_.height / 2.0;
                 min_radius_ = params_.radius * 0.1;
+                theta_ = params_.offset_theta;
             }
 
             void run(geometry_msgs::msg::PoseStamped &pose) override
@@ -150,7 +152,7 @@ namespace uosm
 
                 double angle_towards_middle = atan2(params_.offset_y - pose.pose.position.y, params_.offset_x - pose.pose.position.x);
                 tf2::Quaternion quat;
-                quat.setRPY(0, 0, angle_towards_middle + YAW_OFFSET);
+                quat.setRPY(0, 0, angle_towards_middle);
                 pose.pose.orientation = tf2::toMsg(quat);
 
                 theta_ += params_.speed * params_.dt; // angular velocity
@@ -167,6 +169,7 @@ namespace uosm
             CloudPattern(const PatternParameters &params)
             {
                 params_ = params;
+                theta_ = params_.offset_theta;
             }
 
             void run(geometry_msgs::msg::PoseStamped &pose) override
@@ -182,7 +185,7 @@ namespace uosm
 
                 double angle = atan2(y - params_.offset_y, x - params_.offset_x);
                 tf2::Quaternion quat;
-                quat.setRPY(0, 0, angle + YAW_OFFSET);
+                quat.setRPY(0, 0, angle);
                 pose.pose.orientation = tf2::toMsg(quat);
 
                 double speed_factor = abs(sin(2 * params_.frequency * theta_));
@@ -212,6 +215,7 @@ namespace uosm
             {
                 params_ = params;
                 period_length_ = TWO_PI / params_.frequency;
+                theta_ = params_.offset_theta;
             }
 
             void run(geometry_msgs::msg::PoseStamped &pose)
@@ -235,7 +239,7 @@ namespace uosm
 
                 // Orientation: Maintain a fixed orientation
                 tf2::Quaternion quat;
-                quat.setRPY(0, 0, YAW_OFFSET);
+                quat.setRPY(0, 0, 0);
                 pose.pose.orientation = tf2::toMsg(quat);
 
                 // Update time
@@ -312,6 +316,7 @@ namespace uosm
                 params_ = params;
                 vertices_ = calculate_vertices(params_.radius, params_.ngram_vertices, params_.offset_x, params_.offset_y);
                 order_ = generate_order(params_.ngram_vertices, params_.ngram_step);
+                theta_ = params_.offset_theta;
             }
 
             void run(geometry_msgs::msg::PoseStamped &pose) override
@@ -344,7 +349,7 @@ namespace uosm
                 // Orientation: Face the next vertex
                 double angle_towards_next = atan2(end_y - pose.pose.position.y, end_x - pose.pose.position.x);
                 tf2::Quaternion quat;
-                quat.setRPY(0, 0, angle_towards_next + YAW_OFFSET);
+                quat.setRPY(0, 0, angle_towards_next);
                 pose.pose.orientation = tf2::toMsg(quat);
 
                 if (segment_ == -1 || segment_ == 0)
@@ -371,6 +376,80 @@ namespace uosm
             }
         }; /* class NGramPattern */
 
+        class SquarePattern : public Pattern
+        {
+        private:
+            std::vector<std::pair<double, double>> waypoints_;
+            int current_segment_ = 0;
+            double distance_along_segment_ = 0.0;
+
+        public:
+            SquarePattern(const PatternParameters &params)
+            {
+                params_ = params;
+                distance_along_segment_ = 0.0;
+
+                // Define full flight path (start at origin, trace square, return)
+                waypoints_ = {
+                    {0.0, 0.0},    // Start
+                    {params.radius, params.radius},
+                    {-params.radius, params.radius},   // Enter square
+                    {-params.radius, -params.radius},
+                    {params.radius, -params.radius},
+                    {params.radius, params.radius},   // End square
+                    {0.0, 0.0}     // Return
+                };
+            }
+
+            void run(geometry_msgs::msg::PoseStamped &pose) override
+            {
+                if (current_segment_ >= static_cast<int>(waypoints_.size()) - 1)
+                    return;  // Done
+
+                auto [x0, y0] = waypoints_[current_segment_];
+                auto [x1, y1] = waypoints_[current_segment_ + 1];
+
+                double dx = x1 - x0;
+                double dy = y1 - y0;
+                double length = std::hypot(dx, dy);
+                double step = params_.speed * params_.dt;
+
+                distance_along_segment_ += step;
+
+                if (distance_along_segment_ >= length)
+                {
+                    distance_along_segment_ -= length;
+                    ++current_segment_;
+                    if (current_segment_ == static_cast<int>(waypoints_.size()) - 1)
+                        ++iteration_;  // one full pattern completed
+                    if (current_segment_ >= static_cast<int>(waypoints_.size()) - 1)
+                        return;
+                    x0 = waypoints_[current_segment_].first;
+                    y0 = waypoints_[current_segment_].second;
+                    x1 = waypoints_[current_segment_ + 1].first;
+                    y1 = waypoints_[current_segment_ + 1].second;
+                    dx = x1 - x0;
+                    dy = y1 - y0;
+                    length = std::hypot(dx, dy);
+                }
+
+                double t = distance_along_segment_ / length;
+                double x = (1 - t) * x0 + t * x1 + params_.offset_x;
+                double y = (1 - t) * y0 + t * y1 + params_.offset_y;
+                double z = params_.height;
+
+                double yaw = atan2(dy, dx);
+                tf2::Quaternion quat;
+                quat.setRPY(0, 0, yaw);
+
+                pose.pose.position.x = x;
+                pose.pose.position.y = y;
+                pose.pose.position.z = z;
+                pose.pose.orientation = tf2::toMsg(quat);
+            }
+        }; /* class SquarePattern */
+
+
         /**
          * @brief Factory class for creating flight patterns.
          */
@@ -383,7 +462,8 @@ namespace uosm
                 SPIRAL,
                 CLOUD,
                 SINE,
-                NGRAM
+                NGRAM,
+                SQUARE
             };
 
             /**
@@ -410,6 +490,8 @@ namespace uosm
                     return std::make_unique<SinePattern>(params);
                 case NGRAM:
                     return std::make_unique<NGramPattern>(params);
+                case SQUARE:
+                    return std::make_unique<SquarePattern>(params);
                 default:
                     throw std::invalid_argument("Unknown pattern type");
                 }

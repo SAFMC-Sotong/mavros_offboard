@@ -21,7 +21,7 @@ namespace uosm
 {
     namespace mavros
     {
-
+        constexpr int PATTERNS_COUNT(5);
         constexpr float PUBLISH_RATE(20.0f); // publishing rate
 
         class OffboardControl : public rclcpp::Node
@@ -33,7 +33,8 @@ namespace uosm
                 this->declare_parameter("flight_pattern", rclcpp::ParameterValue(0)); // Default to CIRCULAR
                 rclcpp::Parameter flight_pattern_ = this->get_parameter("flight_pattern");
                 const auto flight_pattern_int_ = flight_pattern_.as_int();
-                if (flight_pattern_int_ < 0 || flight_pattern_int_ > 4)
+
+                if (flight_pattern_int_ < 0 || flight_pattern_int_ > PATTERNS_COUNT)
                 {
                     RCLCPP_ERROR(this->get_logger(), "Invalid flight pattern %ld!", flight_pattern_int_);
                     return;
@@ -48,6 +49,7 @@ namespace uosm
                 this->declare_parameter("offset_x", rclcpp::ParameterValue(0.00f));
                 this->declare_parameter("offset_y", rclcpp::ParameterValue(0.00f));
                 this->declare_parameter("offset_z", rclcpp::ParameterValue(0.00f));
+                this->declare_parameter("offset_theta", rclcpp::ParameterValue(0.00f));
                 this->declare_parameter("frequency", rclcpp::ParameterValue(0.00f));
                 this->declare_parameter("ngram_vertices", rclcpp::ParameterValue(7));
                 this->declare_parameter("ngram_step", rclcpp::ParameterValue(2));
@@ -61,6 +63,7 @@ namespace uosm
                     this->get_parameter("offset_x").as_double(),
                     this->get_parameter("offset_y").as_double(),
                     this->get_parameter("offset_z").as_double(),
+                    this->get_parameter("offset_theta").as_double(),
                     this->get_parameter("frequency").as_double(),
                     static_cast<int>(this->get_parameter("ngram_vertices").as_int()),
                     static_cast<int>(this->get_parameter("ngram_step").as_int()),
@@ -103,9 +106,8 @@ namespace uosm
                 pose.pose.position.y = static_cast<float>(flight_params_.offset_y);
                 pose.pose.position.z = static_cast<float>(flight_params_.height);
 
-                // Initialize quaternion for 90 degrees yaw
                 tf2::Quaternion q;
-                q.setRPY(0, 0, M_PI / 2); // roll=0, pitch=0, yaw=π/2 radians (90 degrees)
+                q.setRPY(0, 0, 0);
                 q.normalize();
 
                 pose.pose.orientation = tf2::toMsg(q); // Convert tf2 quaternion to geometry_msgs
